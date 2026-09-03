@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>株価予想＆チェッカー</title>
+    <title>株価分析チェッカー</title>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -85,20 +85,30 @@
         .down { color: #34c759; font-weight: bold; }
         .metric { font-size: 26px; font-weight: bold; margin: 10px 0 6px; }
         .status-msg { font-size: 13px; color: #007aff; text-align: center; margin-bottom: 8px; font-weight: bold; }
+        .error-card {
+            background: #fff0f0;
+            border: 1px solid #ffcdd2;
+            border-radius: 12px;
+            padding: 14px;
+            color: #d32f2f;
+            font-size: 13px;
+            text-align: center;
+            margin-bottom: 10px;
+        }
     </style>
 </head>
 <body>
 
-    <h1>📈 株価予想＆チェッカー</h1>
+    <h1>📈 株価分析チェッカー</h1>
 
     <div class="tabs">
-        <button class="tab-btn active" id="btn-t1" onclick="switchTab('tab1')">🔥 予想Top10</button>
+        <button class="tab-btn active" id="btn-t1" onclick="switchTab('tab1')">🔥 銘柄一覧・取得</button>
         <button class="tab-btn" id="btn-t2" onclick="switchTab('tab2')">🔍 個別銘柄</button>
     </div>
 
-    <!-- タブ1: 予想 Top10 -->
+    <!-- タブ1: 銘柄一覧 -->
     <div id="tab1" class="content active">
-        <button class="btn" onclick="fetchAndPredict()">最新株価を取得して予想を実行</button>
+        <button class="btn" onclick="fetchAndDisplay()">実際の株価を取得する</button>
         <div id="status1" class="status-msg"></div>
         <div id="results"></div>
     </div>
@@ -113,16 +123,16 @@
 
 <script>
     const STOCKS = [
-        { code: "7203", name: "トヨタ自動車" },
-        { code: "6758", name: "ソニーグループ" },
-        { code: "9984", name: "ソフトバンクグループ" },
-        { code: "8306", name: "三菱UFJフィナンシャルG" },
-        { code: "6861", name: "キーエンス" },
-        { code: "7974", name: "任天堂" },
-        { code: "9983", name: "ファーストリテイリング" },
-        { code: "6501", name: "日立製作所" },
-        { code: "8058", name: "三菱商事" },
-        { code: "4519", name: "中外製薬" }
+        { code: "7203.jp", name: "トヨタ自動車", displayCode: "7203" },
+        { code: "6758.jp", name: "ソニーグループ", displayCode: "6758" },
+        { code: "9984.jp", name: "ソフトバンクグループ", displayCode: "9984" },
+        { code: "8306.jp", name: "三菱UFJフィナンシャルG", displayCode: "8306" },
+        { code: "6861.jp", name: "キーエンス", displayCode: "6861" },
+        { code: "7974.jp", name: "任天堂", displayCode: "7974" },
+        { code: "9983.jp", name: "ファーストリテイリング", displayCode: "9983" },
+        { code: "6501.jp", name: "日立製作所", displayCode: "6501" },
+        { code: "8058.jp", name: "三菱商事", displayCode: "8058" },
+        { code: "4519.jp", name: "中外製薬", displayCode: "4519" }
     ];
 
     document.addEventListener("DOMContentLoaded", () => {
@@ -130,7 +140,7 @@
         STOCKS.forEach(s => {
             const opt = document.createElement('option');
             opt.value = s.code;
-            opt.textContent = `${s.code} : ${s.name}`;
+            opt.textContent = `${s.displayCode} : ${s.name}`;
             selectEl.appendChild(opt);
         });
     });
@@ -148,115 +158,113 @@
         }
     }
 
-    // Yahoo! JAPANファイナンスのHTMLからリアルタイム株価を直接抽出
-    async function getRealStockPrice(code) {
-        const targetUrl = `https://finance.yahoo.co.jp/quote/${code}.T`;
-        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+    // Stooqからプロキシ経由で本物のCSVデータを取得（成功時のみ数値を返却、ダミー値生成は完全削除）
+    async function getStooqData(symbol) {
+        const targetUrl = `https://stooq.com/q/l/?s=${symbol}&f=sdohcv&h&e=csv`;
+        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
 
         try {
             const res = await fetch(proxyUrl);
             if (!res.ok) return null;
-            const data = await res.json();
-            if (!data.contents) return null;
+            const text = await res.text();
 
-            // HTMLパースして株価数字を取得
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(data.contents, 'text/html');
-            
-            // Yahoo!ファイナンスの株価表示クラスまたは要素を取得
-            const priceEl = doc.querySelector('span._112tn312') || doc.querySelector('span[class*="price"]') || doc.querySelector('span._3r3sP23m');
-            
-            if (priceEl) {
-                const rawText = priceEl.textContent.replace(/,/g, '').trim();
-                const price = parseFloat(rawText);
-                if (!isNaN(price) && price > 0) {
-                    return price;
-                }
-            }
-            
-            // 正規表現フォールバック
-            const match = data.contents.match(/<span class="[^"]*">([0-9,]+(?:\.[0-9]+)?)<\/span>\s*<span[^>]*>円<\/span>/);
-            if (match && match[1]) {
-                return parseFloat(match[1].replace(/,/g, ''));
-            }
+            const lines = text.trim().split('\n');
+            if (lines.length < 2) return null;
 
+            const dataRow = lines[1].split(',');
+            const closePrice = parseFloat(dataRow[5]);
+            const openPrice = parseFloat(dataRow[2]);
+            const dateStr = dataRow[0];
+
+            if (!isNaN(closePrice) && closePrice > 0) {
+                return { 
+                    close: closePrice, 
+                    open: !isNaN(openPrice) && openPrice > 0 ? openPrice : closePrice,
+                    date: dateStr 
+                };
+            }
             return null;
         } catch (e) {
             return null;
         }
     }
 
-    // 予想ランキング生成
-    async function fetchAndPredict() {
+    // 全銘柄の株価取得・表示処理
+    async function fetchAndDisplay() {
         const statusEl = document.getElementById('status1');
         const resultsDiv = document.getElementById('results');
         
-        statusEl.textContent = 'リアルタイム株価を取得中...';
+        statusEl.textContent = 'データ通信を開始します...';
         resultsDiv.innerHTML = '';
 
-        let list = [];
+        let successCount = 0;
+
         for (let i = 0; i < STOCKS.length; i++) {
             const s = STOCKS[i];
-            statusEl.textContent = `Yahoo!からリアルタイム取得中 (${i + 1}/${STOCKS.length}): ${s.name}`;
+            statusEl.textContent = `通信中 (${i + 1}/${STOCKS.length}): ${s.name}`;
             
-            const realPrice = await getRealStockPrice(s.code);
+            const data = await getStooqData(s.code);
             
-            if (realPrice) {
-                const growth = ((Math.random() * 2.8) - 0.9);
-                const accuracy = Math.min(94.2, Math.max(62.0, 88 - (Math.abs(growth) * 1.5)));
-                list.push({ ...s, price: realPrice, growth: growth, accuracy: accuracy });
+            if (data) {
+                successCount++;
+                const diff = data.close - data.open;
+                const diffPct = data.open > 0 ? (diff / data.open) * 100 : 0;
+                const diffClass = diff >= 0 ? 'up' : 'down';
+
+                resultsDiv.innerHTML += `
+                    <div class="card">
+                        <div class="rank-title">${s.name} (${s.displayCode})</div>
+                        <div class="metric">${data.close.toLocaleString()} 円</div>
+                        <div class="val-group">
+                            <span>取得日付: ${data.date}</span>
+                            <span class="${diffClass}">始値比: ${diff >= 0 ? '+' : ''}${diffPct.toFixed(2)}%</span>
+                        </div>
+                    </div>
+                `;
+            } else {
+                resultsDiv.innerHTML += `
+                    <div class="error-card">
+                        <b>${s.name} (${s.displayCode})</b>: データの通信取得に失敗しました（ブロックまたは応答なし）
+                    </div>
+                `;
             }
         }
 
-        list.sort((a,b) => b.growth - a.growth);
-        statusEl.textContent = '';
-
-        if (list.length === 0) {
-            resultsDiv.innerHTML = '<div class="card" style="color:red; text-align:center;">リアルタイムデータの取得に失敗しました。<br>通信環境をお確かめの上、再度お試しください。</div>';
-            return;
-        }
-
-        let html = '';
-        list.slice(0, 10).forEach((item, idx) => {
-            const gClass = item.growth >= 0 ? 'up' : 'down';
-            html += `
-                <div class="card">
-                    <div class="rank-title">${idx + 1}位: ${item.name} (${item.code})</div>
-                    <div class="val-group">
-                        <span>現在株価: <b>${Math.round(item.price).toLocaleString()}円</b></span>
-                        <span>予想上昇率: <b class="${gClass}">${item.growth >= 0 ? '+' : ''}${item.growth.toFixed(2)}%</b></span>
-                    </div>
-                    <div class="val-group">
-                        <span style="color:#8e8e93">予想精度/信頼度: ${item.accuracy.toFixed(1)}%</span>
-                    </div>
-                </div>
-            `;
-        });
-        resultsDiv.innerHTML = html;
+        statusEl.textContent = `取得完了: 10件中 ${successCount}件のデータ取得に成功`;
     }
 
-    // 個別銘柄表示
+    // 個別銘柄の取得・表示処理
     async function checkIndividualStock() {
-        const code = document.getElementById('stockSelect').value;
-        const target = STOCKS.find(s => s.code === code);
+        const symbol = document.getElementById('stockSelect').value;
+        const target = STOCKS.find(s => s.code === symbol);
         const detailDiv = document.getElementById('stockDetail');
         
-        detailDiv.innerHTML = '<div style="text-align:center; padding:20px; color:#8e8e93;">リアルタイム株価を取得中...</div>';
+        detailDiv.innerHTML = '<div style="text-align:center; padding:20px; color:#8e8e93;">実際の株価を取得中...</div>';
 
-        const realPrice = await getRealStockPrice(code);
+        const data = await getStooqData(symbol);
         
-        if (realPrice) {
+        if (data) {
+            const diff = data.close - data.open;
+            const diffPct = data.open > 0 ? (diff / data.open) * 100 : 0;
+            const diffClass = diff >= 0 ? 'up' : 'down';
+
             detailDiv.innerHTML = `
                 <div class="card">
-                    <div style="font-size:13px; color:#8e8e93;">${target.name} (${target.code})</div>
-                    <div class="metric">${Math.round(realPrice).toLocaleString()} 円</div>
-                    <div style="font-size:13px; color:#34c759;">
-                        Yahoo!ファイナンス最新リアルタイム値を取得完了
+                    <div style="font-size:13px; color:#8e8e93;">${target.name} (${target.displayCode})</div>
+                    <div class="metric">${data.close.toLocaleString()} 円</div>
+                    <div class="val-group">
+                        <span>取得日: ${data.date}</span>
+                        <span class="${diffClass}">始値比: ${diff >= 0 ? '+' : ''}${diffPct.toFixed(2)}%</span>
                     </div>
                 </div>
             `;
         } else {
-            detailDiv.innerHTML = '<div class="card" style="color:red; text-align:center;">株価データの取得に失敗しました</div>';
+            detailDiv.innerHTML = `
+                <div class="error-card">
+                    <b>${target.name}</b> の株価データ通信に失敗しました。<br>
+                    相手側サーバーのブロックまたは通信制限の影響です。
+                </div>
+            `;
         }
     }
 </script>

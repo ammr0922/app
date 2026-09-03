@@ -123,16 +123,16 @@
 
 <script>
     const STOCKS = [
-        { code: "7203.jp", name: "トヨタ自動車", displayCode: "7203" },
-        { code: "6758.jp", name: "ソニーグループ", displayCode: "6758" },
-        { code: "9984.jp", name: "ソフトバンクグループ", displayCode: "9984" },
-        { code: "8306.jp", name: "三菱UFJフィナンシャルG", displayCode: "8306" },
-        { code: "6861.jp", name: "キーエンス", displayCode: "6861" },
-        { code: "7974.jp", name: "任天堂", displayCode: "7974" },
-        { code: "9983.jp", name: "ファーストリテイリング", displayCode: "9983" },
-        { code: "6501.jp", name: "日立製作所", displayCode: "6501" },
-        { code: "8058.jp", name: "三菱商事", displayCode: "8058" },
-        { code: "4519.jp", name: "中外製薬", displayCode: "4519" }
+        { code: "7203.T", name: "トヨタ自動車", displayCode: "7203" },
+        { code: "6758.T", name: "ソニーグループ", displayCode: "6758" },
+        { code: "9984.T", name: "ソフトバンクグループ", displayCode: "9984" },
+        { code: "8306.T", name: "三菱UFJフィナンシャルG", displayCode: "8306" },
+        { code: "6861.T", name: "キーエンス", displayCode: "6861" },
+        { code: "7974.T", name: "任天堂", displayCode: "7974" },
+        { code: "9983.T", name: "ファーストリテイリング", displayCode: "9983" },
+        { code: "6501.T", name: "日立製作所", displayCode: "6501" },
+        { code: "8058.T", name: "三菱商事", displayCode: "8058" },
+        { code: "4519.T", name: "中外製薬", displayCode: "4519" }
     ];
 
     document.addEventListener("DOMContentLoaded", () => {
@@ -158,30 +158,23 @@
         }
     }
 
-    // Stooqからプロキシ経由で本物のCSVデータを取得（成功時のみ数値を返却、ダミー値生成は完全削除）
-    async function getStooqData(symbol) {
-        const targetUrl = `https://stooq.com/q/l/?s=${symbol}&f=sdohcv&h&e=csv`;
-        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
-
+    // Yahoo Financeエンドポイントへダイレクトアクセス（プロキシ不使用）
+    async function fetchDirectStock(symbol) {
+        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1d`;
+        
         try {
-            const res = await fetch(proxyUrl);
+            const res = await fetch(url, { method: 'GET', mode: 'cors' });
             if (!res.ok) return null;
-            const text = await res.text();
-
-            const lines = text.trim().split('\n');
-            if (lines.length < 2) return null;
-
-            const dataRow = lines[1].split(',');
-            const closePrice = parseFloat(dataRow[5]);
-            const openPrice = parseFloat(dataRow[2]);
-            const dateStr = dataRow[0];
-
-            if (!isNaN(closePrice) && closePrice > 0) {
-                return { 
-                    close: closePrice, 
-                    open: !isNaN(openPrice) && openPrice > 0 ? openPrice : closePrice,
-                    date: dateStr 
-                };
+            const json = await res.json();
+            
+            if (json && json.chart && json.chart.result && json.chart.result[0]) {
+                const meta = json.chart.result[0].meta;
+                const price = meta.regularMarketPrice || meta.chartPreviousClose;
+                const prev = meta.chartPreviousClose || price;
+                
+                if (price && !isNaN(price)) {
+                    return { close: price, open: prev };
+                }
             }
             return null;
         } catch (e) {
@@ -201,9 +194,9 @@
 
         for (let i = 0; i < STOCKS.length; i++) {
             const s = STOCKS[i];
-            statusEl.textContent = `通信中 (${i + 1}/${STOCKS.length}): ${s.name}`;
+            statusEl.textContent = `取得中 (${i + 1}/${STOCKS.length}): ${s.name}`;
             
-            const data = await getStooqData(s.code);
+            const data = await fetchDirectStock(s.code);
             
             if (data) {
                 successCount++;
@@ -216,15 +209,15 @@
                         <div class="rank-title">${s.name} (${s.displayCode})</div>
                         <div class="metric">${data.close.toLocaleString()} 円</div>
                         <div class="val-group">
-                            <span>取得日付: ${data.date}</span>
-                            <span class="${diffClass}">始値比: ${diff >= 0 ? '+' : ''}${diffPct.toFixed(2)}%</span>
+                            <span>基準値: ${data.open.toLocaleString()} 円</span>
+                            <span class="${diffClass}">変動率: ${diff >= 0 ? '+' : ''}${diffPct.toFixed(2)}%</span>
                         </div>
                     </div>
                 `;
             } else {
                 resultsDiv.innerHTML += `
                     <div class="error-card">
-                        <b>${s.name} (${s.displayCode})</b>: データの通信取得に失敗しました（ブロックまたは応答なし）
+                        <b>${s.name} (${s.displayCode})</b>: データ取得失敗（CORS制限による遮断）
                     </div>
                 `;
             }
@@ -239,9 +232,9 @@
         const target = STOCKS.find(s => s.code === symbol);
         const detailDiv = document.getElementById('stockDetail');
         
-        detailDiv.innerHTML = '<div style="text-align:center; padding:20px; color:#8e8e93;">実際の株価を取得中...</div>';
+        detailDiv.innerHTML = '<div style="text-align:center; padding:20px; color:#8e8e93;">株価データを取得中...</div>';
 
-        const data = await getStooqData(symbol);
+        const data = await fetchDirectStock(symbol);
         
         if (data) {
             const diff = data.close - data.open;
@@ -253,16 +246,15 @@
                     <div style="font-size:13px; color:#8e8e93;">${target.name} (${target.displayCode})</div>
                     <div class="metric">${data.close.toLocaleString()} 円</div>
                     <div class="val-group">
-                        <span>取得日: ${data.date}</span>
-                        <span class="${diffClass}">始値比: ${diff >= 0 ? '+' : ''}${diffPct.toFixed(2)}%</span>
+                        <span>基準値: ${data.open.toLocaleString()} 円</span>
+                        <span class="${diffClass}">変動率: ${diff >= 0 ? '+' : ''}${diffPct.toFixed(2)}%</span>
                     </div>
                 </div>
             `;
         } else {
             detailDiv.innerHTML = `
                 <div class="error-card">
-                    <b>${target.name}</b> の株価データ通信に失敗しました。<br>
-                    相手側サーバーのブロックまたは通信制限の影響です。
+                    <b>${target.name}</b> の株価データ通信に失敗しました。
                 </div>
             `;
         }

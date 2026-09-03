@@ -158,28 +158,54 @@
         }
     }
 
-    // Yahoo Financeエンドポイントへダイレクトアクセス（プロキシ不使用）
-    async function fetchDirectStock(symbol) {
-        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1d`;
-        
-        try {
-            const res = await fetch(url, { method: 'GET', mode: 'cors' });
-            if (!res.ok) return null;
-            const json = await res.json();
-            
-            if (json && json.chart && json.chart.result && json.chart.result[0]) {
-                const meta = json.chart.result[0].meta;
-                const price = meta.regularMarketPrice || meta.chartPreviousClose;
-                const prev = meta.chartPreviousClose || price;
+    // JSONP通信によるCORS回避型データ取得処理
+    function fetchStockJSONP(symbol) {
+        return new Promise((resolve) => {
+            const callbackName = 'cb_' + Math.random().toString(36).substring(2, 11);
+            const script = document.createElement('script');
+            const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1d&callback=${callbackName}`;
+
+            let isResolved = false;
+
+            window[callbackName] = function(data) {
+                isResolved = true;
+                delete window[callbackName];
+                if (script.parentNode) script.parentNode.removeChild(script);
                 
-                if (price && !isNaN(price)) {
-                    return { close: price, open: prev };
+                try {
+                    if (data && data.chart && data.chart.result && data.chart.result[0]) {
+                        const meta = data.chart.result[0].meta;
+                        const price = meta.regularMarketPrice || meta.chartPreviousClose;
+                        const prev = meta.chartPreviousClose || price;
+                        if (price && !isNaN(price)) {
+                            resolve({ close: price, open: prev });
+                            return;
+                        }
+                    }
+                } catch (e) {}
+                resolve(null);
+            };
+
+            script.onerror = function() {
+                if (!isResolved) {
+                    delete window[callbackName];
+                    if (script.parentNode) script.parentNode.removeChild(script);
+                    resolve(null);
                 }
-            }
-            return null;
-        } catch (e) {
-            return null;
-        }
+            };
+
+            script.src = url;
+            document.head.appendChild(script);
+
+            // タイムアウト処理（5秒）
+            setTimeout(() => {
+                if (!isResolved) {
+                    delete window[callbackName];
+                    if (script.parentNode) script.parentNode.removeChild(script);
+                    resolve(null);
+                }
+            }, 5000);
+        });
     }
 
     // 全銘柄の株価取得・表示処理
@@ -196,7 +222,7 @@
             const s = STOCKS[i];
             statusEl.textContent = `取得中 (${i + 1}/${STOCKS.length}): ${s.name}`;
             
-            const data = await fetchDirectStock(s.code);
+            const data = await fetchStockJSONP(s.code);
             
             if (data) {
                 successCount++;
@@ -217,7 +243,7 @@
             } else {
                 resultsDiv.innerHTML += `
                     <div class="error-card">
-                        <b>${s.name} (${s.displayCode})</b>: データ取得失敗（CORS制限による遮断）
+                        <b>${s.name} (${s.displayCode})</b>: 応答なし（サーバー側でJSONP非対応またはアクセス制限）
                     </div>
                 `;
             }
@@ -234,7 +260,7 @@
         
         detailDiv.innerHTML = '<div style="text-align:center; padding:20px; color:#8e8e93;">株価データを取得中...</div>';
 
-        const data = await fetchDirectStock(symbol);
+        const data = await fetchStockJSONP(symbol);
         
         if (data) {
             const diff = data.close - data.open;

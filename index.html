@@ -148,29 +148,37 @@
         }
     }
 
-    // Stooqから株価CSVデータを通信取得
+    // 株価データを複数のプロキシ経由で試行取得
     async function getStockData(symbol) {
-        try {
-            const targetUrl = `https://stooq.com/q/l/?s=${symbol.toLowerCase()}&f=sdohcv&h&e=csv`;
-            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
-            
-            const res = await fetch(proxyUrl);
-            if (!res.ok) return null;
-            const text = await res.text();
-            
-            const lines = text.trim().split('\n');
-            if (lines.length < 2) return null;
+        const targetUrl = `https://stooq.com/q/l/?s=${symbol.toLowerCase()}&f=sdohcv&h&e=csv`;
+        
+        // 複数のプロキシURLを準備（1つ目がダメなら2つ目を試す）
+        const proxies = [
+            `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+            `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
+        ];
 
-            const dataRow = lines[1].split(',');
-            const closePrice = parseFloat(dataRow[5]);
-            const openPrice = parseFloat(dataRow[2]);
+        for (const proxyUrl of proxies) {
+            try {
+                const res = await fetch(proxyUrl);
+                if (!res.ok) continue;
+                const text = await res.text();
+                
+                const lines = text.trim().split('\n');
+                if (lines.length < 2) continue;
 
-            if (isNaN(closePrice)) return null;
+                const dataRow = lines[1].split(',');
+                const closePrice = parseFloat(dataRow[5]);
+                const openPrice = parseFloat(dataRow[2]);
 
-            return { close: closePrice, open: openPrice };
-        } catch (e) {
-            return null;
+                if (!isNaN(closePrice) && closePrice > 0) {
+                    return { close: closePrice, open: openPrice || closePrice };
+                }
+            } catch (e) {
+                // 次のプロキシを試す
+            }
         }
+        return null;
     }
 
     // 予想ランキング生成
@@ -191,7 +199,7 @@
                 const cur = stockData.close;
                 const open = stockData.open;
                 
-                const baseChange = ((cur - open) / open) * 100;
+                const baseChange = open > 0 ? ((cur - open) / open) * 100 : 0;
                 const growth = baseChange + ((Math.random() * 2) - 0.8);
                 const accuracy = Math.min(93.5, Math.max(58.0, 85 - (Math.abs(growth) * 1.8)));
 
@@ -203,7 +211,7 @@
         statusEl.textContent = '';
 
         if (list.length === 0) {
-            resultsDiv.innerHTML = '<div class="card" style="color:red; text-align:center;">データの取得に失敗しました。<br>GitHub PagesのURLからアクセスしているかご確認ください。</div>';
+            resultsDiv.innerHTML = '<div class="card" style="color:red; text-align:center;">データの通信取得に失敗しました。<br>しばらく待ってから再度「予想を実行」を押してみてください。</div>';
             return;
         }
 
@@ -239,7 +247,7 @@
             const cur = stockData.close;
             const open = stockData.open;
             const diff = cur - open;
-            const diffPct = (diff / open) * 100;
+            const diffPct = open > 0 ? (diff / open) * 100 : 0;
             const diffClass = diff >= 0 ? 'up' : 'down';
 
             detailDiv.innerHTML = `
